@@ -313,7 +313,7 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       lines.push(generateModelCode(m, pkg));
       lines.push(``);
     }
-    const fileName = toSnake(svc.serviceName) + "_types.kt";
+    const fileName = svc.serviceName + "Types.kt";
     await emitFile(program, { path: `${outputDir}/${fileName}`, content: lines.join("\n") });
   }
 }
