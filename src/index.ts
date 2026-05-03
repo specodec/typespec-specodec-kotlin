@@ -3,83 +3,32 @@ import {
   emitFile,
   Model,
   Type,
-  Scalar,
-  Diagnostic,
 } from "@typespec/compiler";
 import {
-  checkReservedKeyword,
-  formatReservedError,
   collectServices,
   ServiceInfo,
+  BaseEmitterOptions,
+  FieldInfo,
+  extractFields,
+  scalarName,
+  isArrayType,
+  isRecordType,
+  isModelType,
+  arrayElementType,
+  recordElementType,
+  toPascalCase,
+  toSnakeCase,
+  checkAndReportReservedKeywords,
 } from "@specodec/typespec-emitter-core";
 
-export type EmitterOptions = {
-  "emitter-output-dir": string;
-  "ignore-reserved-keywords"?: boolean;
-};
-
-interface FieldInfo {
-  name: string;
-  type: Type;
-  optional: boolean;
-}
-
-function extractFields(model: Model): FieldInfo[] {
-  const fields: FieldInfo[] = [];
-  for (const [name, prop] of model.properties) {
-    fields.push({ name, type: prop.type, optional: prop.optional ?? false });
-  }
-  return fields;
-}
-
-function isStringType(type: Type): boolean {
-  if (type.kind === "Scalar") {
-    const s = type as Scalar;
-    if (s.name === "string") return true;
-    if (s.baseScalar) return isStringType(s.baseScalar);
-  }
-  if (type.kind === "Intrinsic") return (type as any).name === "string";
-  return false;
-}
-
-function scalarName(type: Type): string | null {
-  if (type.kind !== "Scalar") return null;
-  const s = type as Scalar;
-  const known = ["int8","int16","int32","int64","uint8","uint16","uint32","uint64","integer",
-                  "float","float32","float64","decimal","boolean","bytes","string"];
-  if (known.includes(s.name)) return s.name;
-  if (s.baseScalar) return scalarName(s.baseScalar);
-  return s.name;
-}
-
-function isArrayType(type: Type): boolean {
-  if (type.kind !== "Model" || !(type as Model).indexer) return false;
-  const keyName = ((type as Model).indexer!.key as any).name;
-  return keyName === "integer";
-}
-
-function isRecordType(type: Type): boolean {
-  if (type.kind !== "Model" || !(type as Model).indexer) return false;
-  const keyName = ((type as Model).indexer!.key as any).name;
-  return keyName === "string";
-}
-
-function arrayElementType(type: Type): Type {
-  if (type.kind === "Model" && (type as Model).indexer) return (type as Model).indexer!.value;
-  return type;
-}
-
-function recordElementType(type: Type): Type {
-  if (type.kind === "Model" && (type as Model).indexer) return (type as Model).indexer!.value;
-  return type;
-}
+export type EmitterOptions = BaseEmitterOptions;
 
 function typeToKotlin(type: Type): string {
   if (isArrayType(type)) return `List<${typeToKotlin(arrayElementType(type))}>`;
   if (isRecordType(type)) return `Map<String, ${typeToKotlin(recordElementType(type))}>`;
-  const sn = scalarName(type);
-  if (sn) {
-    switch (sn) {
+  const n = scalarName(type);
+  if (n) {
+    switch (n) {
       case "string": return "String";
       case "boolean": return "Boolean";
       case "int8": return "Byte";
@@ -102,9 +51,9 @@ function typeToKotlin(type: Type): string {
 function defaultValue(type: Type): string {
   if (isArrayType(type)) return "emptyList()";
   if (isRecordType(type)) return "emptyMap()";
-  const sn = scalarName(type);
-  if (sn) {
-    switch (sn) {
+  const n = scalarName(type);
+  if (n) {
+    switch (n) {
       case "string": return '""';
       case "boolean": return "false";
       case "int8": case "int16": case "int32": case "integer": return "0";
@@ -119,11 +68,6 @@ function defaultValue(type: Type): string {
   return "null";
 }
 
-function isModelType(type: Type): boolean {
-  return type.kind === "Model";
-}
-
-// Single format-agnostic write expression
 function writeExpr(expr: string, type: Type, w: string): string {
   if (isArrayType(type)) {
     const elem = arrayElementType(type);
@@ -141,9 +85,9 @@ function writeExpr(expr: string, type: Type, w: string): string {
       `${w}.endObject()`,
     ].join("\n        ");
   }
-  const sn = scalarName(type);
-  if (sn) {
-    switch (sn) {
+  const n = scalarName(type);
+  if (n) {
+    switch (n) {
       case "string": return `${w}.writeString(${expr})`;
       case "boolean": return `${w}.writeBool(${expr})`;
       case "int8": case "int16": return `${w}.writeInt32(${expr}.toInt())`;
@@ -157,9 +101,7 @@ function writeExpr(expr: string, type: Type, w: string): string {
       case "bytes": return `${w}.writeBytes(${expr})`;
     }
   }
-  if (type.kind === "Model" && (type as Model).name) {
-    return `_write${(type as Model).name}(${w}, ${expr})`;
-  }
+  if (type.kind === "Model" && (type as Model).name) return `_write${(type as Model).name}(${w}, ${expr})`;
   return `// TODO: unknown type`;
 }
 
@@ -174,9 +116,9 @@ function readExpr(type: Type, r: string, optional?: boolean): string {
     const ktElem = typeToKotlin(elem);
     return `run { val _map = mutableMapOf<String, ${ktElem}>(); ${r}.beginObject(); while (${r}.hasNextField()) { val _k = ${r}.readFieldName(); _map[_k] = ${readExpr(elem, r)} }; ${r}.endObject(); _map }`;
   }
-  const sn = scalarName(type);
-  if (sn) {
-    switch (sn) {
+  const n = scalarName(type);
+  if (n) {
+    switch (n) {
       case "string": return `${r}.readString()`;
       case "boolean": return `${r}.readBool()`;
       case "int8": return `${r}.readInt32().toByte()`;
@@ -192,9 +134,8 @@ function readExpr(type: Type, r: string, optional?: boolean): string {
       case "bytes": return `${r}.readBytes()`;
     }
   }
-  if (type.kind === "Model") {
-    const name = (type as Model).name;
-    const decodeCall = `${name}Codec.decode(${r})`;
+  if (type.kind === "Model" && (type as Model).name) {
+    const decodeCall = `${(type as Model).name}Codec.decode(${r})`;
     if (optional) return `if (${r}.isNull()) { ${r}.readNull(); null } else { ${decodeCall} }`;
     return decodeCall;
   }
@@ -203,6 +144,8 @@ function readExpr(type: Type, r: string, optional?: boolean): string {
 
 function generateModelCode(m: Model, pkg: string): string {
   const fields = extractFields(m);
+  const optionalFields = fields.filter(f => f.optional);
+  const requiredFields = fields.filter(f => !f.optional);
   const lines: string[] = [];
 
   if (fields.length === 0) {
@@ -210,27 +153,20 @@ function generateModelCode(m: Model, pkg: string): string {
   } else {
     lines.push(`data class ${m.name}(`);
     for (const f of fields) {
-      const kt = typeToKotlin(f.type);
       if (f.optional) {
-        lines.push(`    val ${f.name}: ${kt}? = null,`);
+        lines.push(`    val ${f.name}: ${typeToKotlin(f.type)}? = null,`);
       } else {
-        lines.push(`    val ${f.name}: ${kt},`);
+        lines.push(`    val ${f.name}: ${typeToKotlin(f.type)},`);
       }
     }
     lines.push(`)`);
   }
 
-  const requiredFields = fields.filter(f => !f.optional);
-  const optionalFields = fields.filter(f => f.optional);
-
-  // Generate _write helper (format-agnostic using SpecWriter)
   lines.push(``);
   lines.push(`private fun _write${m.name}(w: SpecWriter, obj: ${m.name}) {`);
   if (optionalFields.length > 0) {
     lines.push(`    var _n = ${requiredFields.length}`);
-    for (const f of optionalFields) {
-      lines.push(`    if (obj.${f.name} != null) _n++`);
-    }
+    for (const f of optionalFields) lines.push(`    if (obj.${f.name} != null) _n++`);
     lines.push(`    w.beginObject(_n)`);
   } else {
     lines.push(`    w.beginObject(${fields.length})`);
@@ -246,16 +182,11 @@ function generateModelCode(m: Model, pkg: string): string {
   lines.push(`}`);
 
   lines.push(``);
-
   lines.push(`val ${m.name}Codec: SpecCodec<${m.name}> = SpecCodec(`);
-
   lines.push(`    encode = { w, obj -> _write${m.name}(w, obj) },`);
-
   lines.push(`    decode = { r ->`);
   for (const f of fields) {
-    if (f.optional) {
-      lines.push(`        var _${f.name}: ${typeToKotlin(f.type)}? = null`);
-    } else if (isModelType(f.type)) {
+    if (f.optional || isModelType(f.type)) {
       lines.push(`        var _${f.name}: ${typeToKotlin(f.type)}? = null`);
     } else {
       lines.push(`        var _${f.name}: ${typeToKotlin(f.type)} = ${defaultValue(f.type)}`);
@@ -271,60 +202,26 @@ function generateModelCode(m: Model, pkg: string): string {
   lines.push(`            }`);
   lines.push(`        }`);
   lines.push(`        r.endObject()`);
-  const ctorArgs = fields.map(f => {
-    if (!f.optional && isModelType(f.type)) return `${f.name} = _${f.name}!!`;
-    return `${f.name} = _${f.name}`;
-  }).join(", ");
+  const ctorArgs = fields.map(f => (!f.optional && isModelType(f.type)) ? `${f.name} = _${f.name}!!` : `${f.name} = _${f.name}`).join(", ");
   lines.push(`        ${m.name}(${ctorArgs})`);
   lines.push(`    }`);
   lines.push(`)`);
 
-return lines.join("\n");
+  return lines.join("\n");
 }
 
 export async function $onEmit(context: EmitContext<EmitterOptions>) {
   const program = context.program;
   const outputDir = context.emitterOutputDir;
   const ignoreReservedKeywords = context.options["ignore-reserved-keywords"] ?? false;
-
   const services = collectServices(program);
 
-  const reservedFieldErrors: Diagnostic[] = [];
-  for (const svc of services) {
-    for (const m of svc.models) {
-      if (!m.name) continue;
-      for (const [fieldName, prop] of m.properties) {
-        const reservedIn = checkReservedKeyword(fieldName);
-        if (reservedIn.length > 0) {
-          const message = formatReservedError(fieldName, m.name, reservedIn);
-          const diag: Diagnostic = {
-            severity: "error",
-            code: "reserved-keyword",
-            message,
-            target: prop,
-          };
-          reservedFieldErrors.push(diag);
-        }
-      }
-    }
-  }
-
-  if (reservedFieldErrors.length > 0 && !ignoreReservedKeywords) {
-    program.reportDiagnostics(reservedFieldErrors);
-    return;
-  }
-
-  if (reservedFieldErrors.length > 0 && ignoreReservedKeywords) {
-    for (const diag of reservedFieldErrors) {
-      console.warn(`Warning: ${diag.message}`);
-    }
-  }
+  if (checkAndReportReservedKeywords(program, services, ignoreReservedKeywords)) return;
 
   for (const svc of services) {
-    const toSnake = (s: string) => s.replace(/([A-Z])/g, (m, c, i) => (i ? "_" : "") + c.toLowerCase());
-    const pkg = (svc.namespace.name || "alltypes").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const pkg = toSnakeCase(svc.namespace.name || "globalnamespace").replace(/_/g, "").toLowerCase();
     const lines: string[] = [];
-    lines.push("// Generated by @specodec/typespec-specodec-kotlin. DO NOT EDIT.");
+    lines.push("// Generated by @specodec/typespec-emitter-kotlin. DO NOT EDIT.");
     lines.push(`package ${pkg}`);
     lines.push(``);
     lines.push(`import specodec.*`);
@@ -334,7 +231,8 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       lines.push(generateModelCode(m, pkg));
       lines.push(``);
     }
-    const fileName = svc.serviceName + "Types.kt";
+    // Kotlin/Swift use PascalCase file names
+    const fileName = `${toPascalCase(toSnakeCase(svc.serviceName))}Types.kt`;
     await emitFile(program, { path: `${outputDir}/${fileName}`, content: lines.join("\n") });
   }
 }

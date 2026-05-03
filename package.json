@@ -27,7 +27,7 @@
     "prepare": "npm run build"
   },
   "dependencies": {
-    "@specodec/typespec-emitter-core": "^0.0.23"
+    "@specodec/typespec-emitter-core": "^0.0.24"
   },
   "devDependencies": {
     "@typespec/compiler": "^1.11.0",
