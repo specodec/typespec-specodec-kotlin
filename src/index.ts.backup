@@ -1,7 +1,12 @@
 import {
   EmitContext,
   emitFile,
+  listServices,
+  navigateTypesInNamespace,
   Model,
+  Namespace,
+  Interface,
+  Program,
   Type,
   Scalar,
   Diagnostic,
@@ -9,8 +14,7 @@ import {
 import {
   checkReservedKeyword,
   formatReservedError,
-  collectServices,
-  ServiceInfo,
+  isSpecodecModel,
 } from "@specodec/typespec-emitter-core";
 
 export type EmitterOptions = {
@@ -22,6 +26,13 @@ interface FieldInfo {
   name: string;
   type: Type;
   optional: boolean;
+}
+
+interface ServiceInfo {
+  namespace: Namespace;
+  iface: Interface;
+  serviceName: string;
+  models: Model[];
 }
 
 function extractFields(model: Model): FieldInfo[] {
@@ -279,7 +290,43 @@ function generateModelCode(m: Model, pkg: string): string {
   lines.push(`    }`);
   lines.push(`)`);
 
-return lines.join("\n");
+  return lines.join("\n");
+}
+
+function collectServices(program: Program): ServiceInfo[] {
+  const services = listServices(program);
+  const result: ServiceInfo[] = [];
+  const globalSeen = new Set<string>();
+  
+  function collectFromNs(ns: Namespace, iface?: Interface) {
+    const models: Model[] = [];
+    navigateTypesInNamespace(ns, {
+      model: (m: Model) => {
+        if (m.name && !globalSeen.has(m.name) && isSpecodecModel(program, m)) {
+          models.push(m);
+          globalSeen.add(m.name);
+        }
+      },
+    });
+    if (models.length > 0) {
+      result.push({ 
+        namespace: ns, 
+        iface: iface || { name: ns.name || "TestService", namespace: ns } as Interface, 
+        serviceName: iface?.name || ns.name || "TestService", 
+        models 
+      });
+    }
+  }
+  
+  for (const svc of services) collectFromNs(svc.type);
+  if (result.length === 0) {
+    const globalNs = program.getGlobalNamespaceType();
+    for (const [, ns] of globalNs.namespaces) collectFromNs(ns);
+    collectFromNs(globalNs);
+  }
+  return result;
+}
+  return result;
 }
 
 export async function $onEmit(context: EmitContext<EmitterOptions>) {
