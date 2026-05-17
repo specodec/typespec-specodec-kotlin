@@ -160,16 +160,6 @@ function writeExpr(expr: string, type: Type, w: string): string {
 }
 
 function readExpr(type: Type, r: string, optional?: boolean): string {
-  if (isArrayType(type)) {
-    const elem = arrayElementType(type)!;
-    const ktElem = typeToKotlin(elem);
-    return `run { val list = mutableListOf<${ktElem}>(); ${r}.beginArray(); while (${r}.hasNextElement()) { list.add(${readExpr(elem, r)}) }; ${r}.endArray(); list }`;
-  }
-  if (isRecordType(type)) {
-    const elem = recordElementType(type)!;
-    const ktElem = typeToKotlin(elem);
-    return `run { val map = mutableMapOf<String, ${ktElem}>(); ${r}.beginObject(); while (${r}.hasNextField()) { val key = ${r}.readFieldName(); map[key] = ${readExpr(elem, r)} }; ${r}.endObject(); map }`;
-  }
   const n = scalarName(type);
   if (n) {
     switch (n) {
@@ -214,6 +204,48 @@ function readExpr(type: Type, r: string, optional?: boolean): string {
     return `${(type as any).name}Codec.decode(${r})`;
   }
   return `null!!`;
+}
+
+function generateFieldRead(type: Type, r: string, indent: string, counter: { value: number }): { tmpVar: string; lines: string[] } {
+  const tmpVar = `_tmp${counter.value++}`;
+  if (isArrayType(type)) {
+    const elem = arrayElementType(type)!;
+    const ktElem = typeToKotlin(elem);
+    const lines: string[] = [];
+    lines.push(`${indent}val ${tmpVar} = mutableListOf<${ktElem}>()`);
+    lines.push(`${indent}${r}.beginArray()`);
+    lines.push(`${indent}while (${r}.hasNextElement()) {`);
+    if (isArrayType(elem) || isRecordType(elem)) {
+      const inner = generateFieldRead(elem, r, indent + "    ", counter);
+      for (const l of inner.lines) lines.push(l);
+      lines.push(`${indent}    ${tmpVar}.add(${inner.tmpVar})`);
+    } else {
+      lines.push(`${indent}    ${tmpVar}.add(${readExpr(elem, r)})`);
+    }
+    lines.push(`${indent}}`);
+    lines.push(`${indent}${r}.endArray()`);
+    return { tmpVar, lines };
+  }
+  if (isRecordType(type)) {
+    const elem = recordElementType(type)!;
+    const ktElem = typeToKotlin(elem);
+    const lines: string[] = [];
+    lines.push(`${indent}val ${tmpVar} = mutableMapOf<String, ${ktElem}>()`);
+    lines.push(`${indent}${r}.beginObject()`);
+    lines.push(`${indent}while (${r}.hasNextField()) {`);
+    lines.push(`${indent}    val key = ${r}.readFieldName()`);
+    if (isArrayType(elem) || isRecordType(elem)) {
+      const inner = generateFieldRead(elem, r, indent + "    ", counter);
+      for (const l of inner.lines) lines.push(l);
+      lines.push(`${indent}    ${tmpVar}[key] = ${inner.tmpVar}`);
+    } else {
+      lines.push(`${indent}    ${tmpVar}[key] = ${readExpr(elem, r)}`);
+    }
+    lines.push(`${indent}}`);
+    lines.push(`${indent}${r}.endObject()`);
+    return { tmpVar, lines };
+  }
+  throw new Error("generateFieldRead called for non-array/record type");
 }
 
 function generateModelCode(m: Model, _pkg: string): string {
@@ -276,9 +308,18 @@ function generateModelCode(m: Model, _pkg: string): string {
   lines.push(`        r.beginObject()`);
   lines.push(`        while (r.hasNextField()) {`);
   lines.push(`            when (r.readFieldName()) {`);
+  const _counter = { value: 0 };
   for (const f of fields) {
     const fld = toCamelCase(f.name);
-    lines.push(`                "${f.name}" -> ${fld}Val = ${readExpr(f.type, "r", f.optional)}`);
+    if (isArrayType(f.type) || isRecordType(f.type)) {
+      const read = generateFieldRead(f.type, "r", "                    ", _counter);
+      lines.push(`                "${f.name}" -> {`);
+      for (const l of read.lines) lines.push(l);
+      lines.push(`                    ${fld}Val = ${read.tmpVar}`);
+      lines.push(`                }`);
+    } else {
+      lines.push(`                "${f.name}" -> ${fld}Val = ${readExpr(f.type, "r", f.optional)}`);
+    }
   }
   lines.push(`                else -> r.skip()`);
   lines.push(`            }`);
