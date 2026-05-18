@@ -206,46 +206,99 @@ function readExpr(type: Type, r: string, optional?: boolean): string {
   return `null!!`;
 }
 
-function generateFieldRead(type: Type, r: string, indent: string, counter: { value: number }): { tmpVar: string; lines: string[] } {
-  const tmpVar = `_tmp`;
+function generateFieldRead(f: FieldInfo, r: string, indent: string, skipIndent: string, counter: { value: number }): { stmts: string[]; value: string } {
+  const type = f.type;
+  const optional = f.optional;
+  const tmpVar = `tmp${counter.value++}`;
   if (isArrayType(type)) {
     const elem = arrayElementType(type)!;
     const ktElem = typeToKotlin(elem);
-    const lines: string[] = [];
-    lines.push(`${indent}val ${tmpVar} = mutableListOf<${ktElem}>()`);
-    lines.push(`${indent}${r}.beginArray()`);
-    lines.push(`${indent}while (${r}.hasNextElement()) {`);
-    if (isArrayType(elem) || isRecordType(elem)) {
-      const inner = generateFieldRead(elem, r, indent + "    ", counter);
-      for (const l of inner.lines) lines.push(l);
-      lines.push(`${indent}    ${tmpVar}.add(${inner.tmpVar})`);
+    const stmts: string[] = [];
+    if (optional) {
+      stmts.push(`${indent}var ${tmpVar} = mutableListOf<${ktElem}>()`);
+      stmts.push(`${indent}if (${r}.isNull()) {`);
+      stmts.push(`${indent}    ${r}.readNull()`);
+      stmts.push(`${indent}} else {`);
+      const ri = indent + "    ";
+      stmts.push(`${ri}${r}.beginArray()`);
+      stmts.push(`${ri}while (${r}.hasNextElement()) {`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, ri + "    ", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${ri}    ${tmpVar}.add(${inner.value})`);
+      } else {
+        stmts.push(`${ri}    ${tmpVar}.add(${readExpr(elem, r)})`);
+      }
+      stmts.push(`${ri}}`);
+      stmts.push(`${ri}${r}.endArray()`);
+      stmts.push(`${indent}}`);
     } else {
-      lines.push(`${indent}    ${tmpVar}.add(${readExpr(elem, r)})`);
+      stmts.push(`${indent}val ${tmpVar} = mutableListOf<${ktElem}>()`);
+      stmts.push(`${indent}${r}.beginArray()`);
+      stmts.push(`${indent}while (${r}.hasNextElement()) {`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, indent + "    ", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${indent}    ${tmpVar}.add(${inner.value})`);
+      } else {
+        stmts.push(`${indent}    ${tmpVar}.add(${readExpr(elem, r)})`);
+      }
+      stmts.push(`${indent}}`);
+      stmts.push(`${indent}${r}.endArray()`);
     }
-    lines.push(`${indent}}`);
-    lines.push(`${indent}${r}.endArray()`);
-    return { tmpVar, lines };
+    return { stmts, value: tmpVar };
   }
   if (isRecordType(type)) {
     const elem = recordElementType(type)!;
     const ktElem = typeToKotlin(elem);
-    const lines: string[] = [];
-    lines.push(`${indent}val ${tmpVar} = mutableMapOf<String, ${ktElem}>()`);
-    lines.push(`${indent}${r}.beginObject()`);
-    lines.push(`${indent}while (${r}.hasNextField()) {`);
-    lines.push(`${indent}    val key = ${r}.readFieldName()`);
-    if (isArrayType(elem) || isRecordType(elem)) {
-      const inner = generateFieldRead(elem, r, indent + "    ", counter);
-      for (const l of inner.lines) lines.push(l);
-      lines.push(`${indent}    ${tmpVar}[key] = ${inner.tmpVar}`);
+    const stmts: string[] = [];
+    if (optional) {
+      stmts.push(`${indent}var ${tmpVar} = mutableMapOf<String, ${ktElem}>()`);
+      stmts.push(`${indent}if (${r}.isNull()) {`);
+      stmts.push(`${indent}    ${r}.readNull()`);
+      stmts.push(`${indent}} else {`);
+      const ri = indent + "    ";
+      stmts.push(`${ri}${r}.beginObject()`);
+      stmts.push(`${ri}while (${r}.hasNextField()) {`);
+      stmts.push(`${ri}    val key = ${r}.readFieldName()`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, ri + "    ", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${ri}    ${tmpVar}[key] = ${inner.value}`);
+      } else {
+        stmts.push(`${ri}    ${tmpVar}[key] = ${readExpr(elem, r)}`);
+      }
+      stmts.push(`${ri}}`);
+      stmts.push(`${ri}${r}.endObject()`);
+      stmts.push(`${indent}}`);
     } else {
-      lines.push(`${indent}    ${tmpVar}[key] = ${readExpr(elem, r)}`);
+      stmts.push(`${indent}val ${tmpVar} = mutableMapOf<String, ${ktElem}>()`);
+      stmts.push(`${indent}${r}.beginObject()`);
+      stmts.push(`${indent}while (${r}.hasNextField()) {`);
+      stmts.push(`${indent}    val key = ${r}.readFieldName()`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, indent + "    ", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${indent}    ${tmpVar}[key] = ${inner.value}`);
+      } else {
+        stmts.push(`${indent}    ${tmpVar}[key] = ${readExpr(elem, r)}`);
+      }
+      stmts.push(`${indent}}`);
+      stmts.push(`${indent}${r}.endObject()`);
     }
-    lines.push(`${indent}}`);
-    lines.push(`${indent}${r}.endObject()`);
-    return { tmpVar, lines };
+    return { stmts, value: tmpVar };
   }
-  throw new Error("generateFieldRead called for non-array/record type");
+  if (optional && ((type.kind === "Model" && (type as Model).name) || isUnionType(type))) {
+    const stmts: string[] = [];
+    stmts.push(`${indent}var ${tmpVar}: ${typeToKotlin(type)}? = null`);
+    stmts.push(`${indent}if (${r}.isNull()) {`);
+    stmts.push(`${indent}    ${r}.readNull()`);
+    stmts.push(`${indent}} else {`);
+    stmts.push(`${indent}    ${tmpVar} = ${readExpr(type, r)}`);
+    stmts.push(`${indent}}`);
+    return { stmts, value: tmpVar };
+  }
+  return { stmts: [], value: readExpr(type, r) };
 }
 
 function generateModelCode(m: Model, _pkg: string): string {
@@ -311,14 +364,14 @@ function generateModelCode(m: Model, _pkg: string): string {
   const _counter = { value: 0 };
   for (const f of fields) {
     const fld = toCamelCase(f.name);
-    if (isArrayType(f.type) || isRecordType(f.type)) {
-      const read = generateFieldRead(f.type, "r", "                    ", _counter);
+    const read = generateFieldRead(f, "r", "                    ", "", _counter);
+    if (read.stmts.length > 0) {
       lines.push(`                "${f.name}" -> {`);
-      for (const l of read.lines) lines.push(l);
-      lines.push(`                    ${fld}Val = ${read.tmpVar}`);
+      for (const l of read.stmts) lines.push(l);
+      lines.push(`                    ${fld}Val = ${read.value}`);
       lines.push(`                }`);
     } else {
-      lines.push(`                "${f.name}" -> ${fld}Val = ${readExpr(f.type, "r", f.optional)}`);
+      lines.push(`                "${f.name}" -> ${fld}Val = ${read.value}`);
     }
   }
   lines.push(`                else -> r.skip()`);
