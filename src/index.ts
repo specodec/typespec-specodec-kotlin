@@ -349,11 +349,11 @@ function generateModelCode(m: Model, _pkg: string): string {
   lines.push(`    decode = { r ->`);
   for (const f of fields) {
     const fld = toCamelCase(f.name);
-    if (isUnionType(f.type)) {
+    if (f.optional || isModelType(f.type)) {
+      lines.push(`        var ${fld}Val: ${typeToKotlin(f.type)}? = null`);
+    } else if (isUnionType(f.type)) {
       const unionName = (f.type as any).name;
       lines.push(`        var ${fld}Val: ${typeToKotlin(f.type)} = ${unionName}.${unionName}Undefined`);
-    } else if (f.optional || isModelType(f.type)) {
-      lines.push(`        var ${fld}Val: ${typeToKotlin(f.type)}? = null`);
     } else {
       lines.push(`        var ${fld}Val: ${typeToKotlin(f.type)} = ${defaultValue(f.type)}`);
     }
