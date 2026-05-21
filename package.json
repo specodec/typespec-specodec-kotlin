@@ -34,7 +34,7 @@
     "@specodec/typespec-emitter-core": "^1.0.0"
   },
   "publishConfig": {
-    "registry": "http://10.199.64.20:3000/api/packages/specodec/npm/"
+    "registry": "http://10.199.64.20:30000/api/packages/specodec/npm/"
   },
   "peerDependencies": {
     "@typespec/compiler": "^1.12.0",
