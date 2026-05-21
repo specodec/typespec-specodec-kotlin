@@ -24,7 +24,7 @@ import {
 
 export type EmitterOptions = BaseEmitterOptions;
 
-function typeToKotlin(type: Type): string {
+export function typeToKotlin(type: Type): string {
   if (isArrayType(type)) return `List<${typeToKotlin(arrayElementType(type)!)}>`;
   if (isRecordType(type)) return `Map<String, ${typeToKotlin(recordElementType(type)!)}>`;
   const n = scalarName(type);
@@ -67,7 +67,7 @@ function typeToKotlin(type: Type): string {
   return "Any";
 }
 
-function defaultValue(type: Type): string {
+export function defaultValue(type: Type): string {
   if (isArrayType(type)) return "emptyList()";
   if (isRecordType(type)) return "emptyMap()";
   const n = scalarName(type);
@@ -104,7 +104,7 @@ function defaultValue(type: Type): string {
   return "null";
 }
 
-function writeExpr(expr: string, type: Type, w: string): string {
+export function writeExpr(expr: string, type: Type, w: string): string {
   if (isArrayType(type)) {
     const elem = arrayElementType(type)!;
     return [
@@ -159,7 +159,7 @@ function writeExpr(expr: string, type: Type, w: string): string {
   return `// TODO: unknown type`;
 }
 
-function readExpr(type: Type, r: string, optional?: boolean): string {
+export function readExpr(type: Type, r: string, optional?: boolean): string {
   const n = scalarName(type);
   if (n) {
     switch (n) {
@@ -206,7 +206,7 @@ function readExpr(type: Type, r: string, optional?: boolean): string {
   return `null!!`;
 }
 
-function generateFieldRead(f: FieldInfo, r: string, indent: string, skipIndent: string, counter: { value: number }): { stmts: string[]; value: string } {
+export function generateFieldRead(f: FieldInfo, r: string, indent: string, skipIndent: string, counter: { value: number }): { stmts: string[]; value: string } {
   const type = f.type;
   const optional = f.optional;
   const tmpVar = `tmp${counter.value++}`;
@@ -301,7 +301,7 @@ function generateFieldRead(f: FieldInfo, r: string, indent: string, skipIndent: 
   return { stmts: [], value: readExpr(type, r) };
 }
 
-function generateModelCode(m: Model, _pkg: string): string {
+export function generateModelCode(m: Model, _pkg: string): string {
   const fields = extractFields(m);
   const optionalFields = fields.filter((f) => f.optional);
   const requiredFields = fields.filter((f) => !f.optional);
